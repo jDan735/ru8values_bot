@@ -1,25 +1,21 @@
 # -*- coding: utf8 -*-
-from aiogram import executor
-
-import logging
-import json
 import yaml
-import math
 
-from os import environ
-from aiogram import Bot, Dispatcher
-from aiogram import types
+from aiogram import Bot, Dispatcher, executor, types
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-if "TOKEN" in environ:
-    TOKEN = environ["TOKEN"]
+import json
+import logging
 
-else:
-    with open("token.json") as file:
-        token = json.loads(file.read())
-        TOKEN = token["token"]
+from os import environ
 
-        heroku = False
+try:
+    with open("config.json") as file:
+        config = json.loads(file.read())
+except FileNotFoundError:
+    config = {}
+
+TOKEN = environ.get("TOKEN") or config.get("token")
 
 with open("data/ideologies.json", encoding="UTF8") as file:
     ideologies = json.loads(file.read())
@@ -29,15 +25,26 @@ with open("data/questions.json", encoding="UTF8") as file:
 
 max_econ, max_dipl, max_govt, max_scty = 0, 0, 0, 0
 for question in questions:
-    max_econ += question["effect"]["econ"]
-    max_dipl += question["effect"]["dipl"]
-    max_govt += question["effect"]["govt"]
-    max_scty += question["effect"]["scty"]
+    max_econ += abs(question["effect"]["econ"])
+    max_dipl += abs(question["effect"]["dipl"])
+    max_govt += abs(question["effect"]["govt"])
+    max_scty += abs(question["effect"]["scty"])
 
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher(bot)
+
+
+@dp.message_handler(commands=["test"])
+async def test(message):
+    call = "{q: 70, econ: 58.5, dipl: 48.9, govt: 40.0, scty: 54.4}"
+
+    start_btn = InlineKeyboardButton(text="TEST",
+                                     callback_data=call)
+    keyboard = InlineKeyboardMarkup().add(start_btn)
+
+    await message.reply('test', parse_mode="HTML", reply_markup=keyboard)
 
 
 @dp.message_handler(commands=["start"])
@@ -49,16 +56,16 @@ async def start(message):
                                      callback_data=call)
     keyboard = InlineKeyboardMarkup().add(start_btn)
 
-    await message.reply('<b>8values</b> — это, по сути, политическая викторина, которая пытается присвоить проценты восьми различным политическим ценностям. Вам будут даны утверждения, по каждому из которых вы должны ответить своим мнением, от <b>🟢 (Полностью согласен)</b> до <b>🔴 (Полностью не согласен)</b>, каждый ответ будет слегка влиять на ваши значения по каждой оси. В конце викторины, ваши ответы будут сравниваться с максимально возможным для каждого значения, таким образом, давая вам процент. Отвечайте честно!\n\nВ данном тесте <b>69</b> вопросов.\n\nФорк и часть перевода сделаны <a href="https://t.me/ysamtme">@ysamtme</a> (буду рад сообщениям об ошибках и неточностях). Бот сделан <a href="t.me/jdan734">@jDan734</a>', disable_web_page_preview=True, parse_mode="HTML", reply_markup=keyboard)  # noqa: E501
+    await message.reply('<b>8values</b> — это, по сути, политическая викторина, которая пытается присвоить проценты восьми различным политическим ценностям. Вам будут даны утверждения, по каждому из которых вы должны ответить своим мнением, от <b>🟢 (Полностью согласен)</b> до <b>🔴 (Полностью не согласен)</b>, каждый ответ будет слегка влиять на ваши значения по каждой оси. В конце викторины, ваши ответы будут сравниваться с максимально возможным для каждого значения, таким образом, давая вам процент. Отвечайте честно!\n\nВ данном тесте <b>69</b> вопросов.\n\nФорк и часть перевода сделаны <a href="https://t.me/ysamtme">@ysamtme</a> (буду рад сообщениям об ошибках и неточностях).', disable_web_page_preview=True, parse_mode="HTML", reply_markup=keyboard)  # noqa: E501
 
 
 def calc_score(score, max_):
-    return (100 * (max_ + score) / (2 * max_))
+    return round((100 * (max_ + score) / (2 * max_)), 1)
 
 
 @dp.callback_query_handler(lambda call: call.data.startswith("{"))
 async def process_callback_button1(call: types.CallbackQuery):
-    data = yaml.load(call.data)
+    data = yaml.safe_load(call.data)
     q_max = len(questions) - 1
     q_id = int(data["q"])
 
@@ -71,15 +78,18 @@ async def process_callback_button1(call: types.CallbackQuery):
         progress = calc_score(data["scty"], max_scty)
 
         ideology = ""
+        ideodist = float("inf")
 
         for ideology in ideologies:
             dist = 0
-            dist += (ideology["stats"]["econ"] - equality) ** 2
-            dist += (ideology["stats"]["govt"] - liberty) ** 2
-            dist += (ideology["stats"]["dipl"] - peace) ** 1.73856063
-            dist += (ideology["stats"]["scty"] - progress) ** 1.73856063
-            if isinstance(dist, complex):
+            dist += abs(ideology["stats"]["econ"] - equality) ** 2
+            dist += abs(ideology["stats"]["govt"] - liberty) ** 2
+            dist += abs(ideology["stats"]["dipl"] - peace) ** 1.73856063
+            dist += abs(ideology["stats"]["scty"] - progress) ** 1.73856063
+
+            if dist < ideodist:
                 ideology_ = ideology["name"]
+                ideodist = dist
 
         ideology = f"Ваша идеология: <b>{ideology_}</b>"
 
@@ -89,7 +99,7 @@ async def process_callback_button1(call: types.CallbackQuery):
         return
 
     data["q"] += 1
-    question = questions[q_id]
+    question = questions[q_id - 1]
 
     keyboard = InlineKeyboardMarkup()
 
@@ -111,7 +121,7 @@ async def process_callback_button1(call: types.CallbackQuery):
 
     keyboard.row(*btns)
     question_text = question["question"][0:-1]
-    text = f"Вопрос {q_id} из {q_max}: <b>{question_text}</b>"
+    text = f"Вопрос {q_id} из {q_max + 1}: <b>{question_text}</b>"
 
     await bot.answer_callback_query(call.id)
     await bot.edit_message_text(chat_id=call.message.chat.id,
